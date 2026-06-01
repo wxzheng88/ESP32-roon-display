@@ -1,4 +1,4 @@
-# Roon Cover Display — ESP32-S3 桌面专辑封面显示器
+# Roon Cover Display — ROON桌面专辑封面显示器
 
 基于微雪 ESP32-S3-Touch-LCD-4 (V4 非触摸版) 的 Roon 专辑封面桌面小摆件。连接局域网内的 RoonCoverArt 服务器，在 480×480 屏幕上实时显示当前播放曲目的专辑封面。
 
