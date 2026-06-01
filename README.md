@@ -20,6 +20,7 @@
 | 连接 | WiFi 2.4GHz |
 
 > ⚠️ **重要：V1 (触摸版) 和 V4 (非触摸版) 的引脚分配完全不同。** 本代码仅适用于 V4 版。
+
 > ⚠️ 开发板wiki：https://www.waveshare.net/wiki/ESP32-S3-Touch-LCD-4
 
 ## 依赖服务
