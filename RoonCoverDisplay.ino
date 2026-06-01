@@ -30,10 +30,10 @@
 #include <lgfx/v1/platforms/esp32s3/Bus_RGB.hpp>
 
 // ===== 用户配置 (修改这 4 行为你的网络信息) =====
-const char* WIFI_SSID     = "storm";
-const char* WIFI_PASS     = "STORM251280";
-const char* SERVER_HOST   = "192.168.1.224";
-const int   SERVER_PORT   = 3666;
+const char* WIFI_SSID     = "*****";   // wifi ssid
+const char* WIFI_PASS     = "*****";   // wifi password
+const char* SERVER_HOST   = "*****";   // RoonCoverArt IP地址
+const int   SERVER_PORT   = *****;     // RoonCoverArt 端口号
 
 // ===== 系统参数 =====
 const int   POLL_INTERVAL = 200;    // 轮询间隔 (ms), 200=近乎实时
