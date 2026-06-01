@@ -53,7 +53,7 @@ Arduino IDE → 工具 → 管理库，搜索安装：
 const char* WIFI_SSID     = "你的WiFi名";
 const char* WIFI_PASS     = "你的WiFi密码";
 const char* SERVER_HOST   = "X.X.X.X";   // RoonCoverArt 服务器的 IP
-const int   SERVER_PORT   = 3666;             // RoonCoverArt 端口
+const int   SERVER_PORT   = 3666;        // RoonCoverArt 端口
 ```
 
 ### 4. 上传
