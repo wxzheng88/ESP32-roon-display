@@ -19,8 +19,8 @@
 | 存储 | 16MB Flash + 8MB PSRAM |
 | 连接 | WiFi 2.4GHz |
 
-> ⚠️ **重要：V1 (触摸版) 和 V4 (非触摸版) 的引脚分配完全不同。** 本代码仅适用于 V4 版。详见 [Pinout](./docs/pinout.md)。
-> 开发板wiki：https://www.waveshare.net/wiki/ESP32-S3-Touch-LCD-4
+> ⚠️ **重要：V1 (触摸版) 和 V4 (非触摸版) 的引脚分配完全不同。** 本代码仅适用于 V4 版。
+> ⚠️ 开发板wiki：https://www.waveshare.net/wiki/ESP32-S3-Touch-LCD-4
 
 ## 依赖服务
 
@@ -51,7 +51,7 @@ Arduino IDE → 工具 → 管理库，搜索安装：
 ```cpp
 const char* WIFI_SSID     = "你的WiFi名";
 const char* WIFI_PASS     = "你的WiFi密码";
-const char* SERVER_HOST   = "192.168.1.x";   // RoonCoverArt 服务器的 IP
+const char* SERVER_HOST   = "X.X.X.X";   // RoonCoverArt 服务器的 IP
 const int   SERVER_PORT   = 3666;             // RoonCoverArt 端口
 ```
 
