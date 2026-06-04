@@ -1,4 +1,4 @@
-# Roon Cover Display — ESP32-S3 桌面专辑封面显示器
+# Roon Cover Display — ROON桌面专辑封面显示器
 
 基于微雪 ESP32-S3-Touch-LCD-4 (V4 非触摸版) 的 Roon 专辑封面桌面小摆件。连接局域网内的 RoonCoverArt 服务器，在 480×480 屏幕上实时显示当前播放曲目的专辑封面。
 
@@ -6,7 +6,7 @@
 
 - 上电 → 启动画面 "roon display" → 自动连接 WiFi → 连接 Roon 服务器 → 全屏显示封面
 - 切歌自动刷新（200ms 检测延迟）
-- 封面自适应缩放到 480×480（支持任意分辨率，包括 3000×3000）
+- 封面自适应缩放到 480×480
 - 服务器离线/断网自动重连
 
 ## 硬件
@@ -19,7 +19,9 @@
 | 存储 | 16MB Flash + 8MB PSRAM |
 | 连接 | WiFi 2.4GHz |
 
-> ⚠️ **重要：V1 (触摸版) 和 V4 (非触摸版) 的引脚分配完全不同。** 本代码仅适用于 V4 版。详见 [Pinout](./docs/pinout.md)。
+> ⚠️ **重要：V1 (触摸版) 和 V4 (非触摸版) 的引脚分配完全不同。** 本代码仅适用于 V4 版。
+
+> ⚠️ 开发板wiki：https://www.waveshare.net/wiki/ESP32-S3-Touch-LCD-4
 
 ## 依赖服务
 
@@ -50,8 +52,8 @@ Arduino IDE → 工具 → 管理库，搜索安装：
 ```cpp
 const char* WIFI_SSID     = "你的WiFi名";
 const char* WIFI_PASS     = "你的WiFi密码";
-const char* SERVER_HOST   = "192.168.1.x";   // RoonCoverArt 服务器的 IP
-const int   SERVER_PORT   = 3666;             // RoonCoverArt 端口
+const char* SERVER_HOST   = "X.X.X.X";   // RoonCoverArt 服务器的 IP
+const int   SERVER_PORT   = 3666;        // RoonCoverArt 端口
 ```
 
 ### 4. 上传
