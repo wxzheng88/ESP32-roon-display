@@ -1,0 +1,17 @@
+# 编译产物
+build/
+*.bin
+*.elf
+*.hex
+
+# ESP32 临时文件
+*.bootloader.bin
+*.partitions.bin
+
+# 隐私文件 — 包含 WiFi 密码等
+wifi_config.h
+
+# IDE
+.vscode/
+.idea/
+*.code-workspace

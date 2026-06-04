@@ -23,17 +23,15 @@
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include <Wire.h>
+#include "boot_logo.h"
 
 #define LGFX_USE_V1
 #include <LovyanGFX.hpp>
 #include <lgfx/v1/platforms/esp32s3/Panel_RGB.hpp>
 #include <lgfx/v1/platforms/esp32s3/Bus_RGB.hpp>
 
-// ===== 用户配置 (修改这 4 行为你的网络信息) =====
-const char* WIFI_SSID     = "storm";
-const char* WIFI_PASS     = "STORM251280";
-const char* SERVER_HOST   = "192.168.1.224";
-const int   SERVER_PORT   = 3666;
+// ===== 用户配置 (复制 wifi_config.example.h 为 wifi_config.h 后修改) =====
+#include "wifi_config.h"
 
 // ===== 系统参数 =====
 const int   POLL_INTERVAL = 200;    // 轮询间隔 (ms), 200=近乎实时
@@ -206,13 +204,16 @@ void setup() {
   display.init();
   display.setBrightness(255);
 
-  // 3. 启动画面
-  display.fillScreen(TFT_BLACK);
-  display.setTextSize(3);
-  display.setTextColor(TFT_WHITE);
-  display.setTextDatum(MC_DATUM);
-  display.drawString("roon display", 240, 240);
-  delay(3000);
+  // 3. 启动画面 - 从 boot_logo.h 加载 JPEG Logo
+  {
+    uint8_t* logoBuf = (uint8_t*)ps_malloc(bootLogoLen);
+    if (logoBuf) {
+      memcpy_P(logoBuf, bootLogoData, bootLogoLen);
+      display.drawJpg(logoBuf, bootLogoLen, LOGO_X, LOGO_Y, LOGO_W, LOGO_H, 0, 0, 0, 0);
+      free(logoBuf);
+    }
+  }
+  delay(4000);
   display.fillScreen(TFT_BLACK);
 
   // 4. WiFi
