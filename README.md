@@ -7,6 +7,14 @@
 
 ## 效果
 
+| 启动 | 封面 | 时钟 |
+|------|------|------|
+| ![启动](display/logo.jpg) | ![封面](display/cover.jpg) | ![时钟](display/time.jpg) |
+
+| 效果图1 | 效果图2 |
+|---------|---------|
+| ![效果1](display/display-1.jpg) | ![效果2](display/display-2.jpg) |
+
 - 上电 → 启动画面 "roon display" → 自动连接 WiFi → 连接 Roon 服务器 → 全屏显示封面
 - **切歌 200ms 内检测，1-3s 内显示新封面**（v1 为 30-60s）
 - **停止播放 15s 后自动切换为时钟**（大号 HH:MM + 中文 "年月日 周X"）
