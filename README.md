@@ -3,17 +3,21 @@
 基于微雪 ESP32-S3-Touch-LCD-4 (V4 非触摸版) 的 Roon 专辑封面桌面小摆件。连接局域网内的 RoonCoverArt 服务器，在 480×480 屏幕上实时显示当前播放曲目的专辑封面，**空闲时自动切换为 NTP 时钟**。
 
 ## 效果
-
-外观
+- 外观
 <img src="display/cover.jpg" width="480">
-logo
+
+- Logo
 <img src="display/logo.jpg" width="480">
-时钟
+
+- 时钟
 <img src="display/time.jpg" width="480">
-显示1
+
+- 显示1
+
 <img src="display/display-1.jpg" width="480">
-显示2
-img src="display/display-2.jpg" width="480">
+
+- 显示2
+<img src="display/display-2.jpg" width="480">
 
 - 上电 → 启动画面 "roon display" → 自动连接 WiFi → 连接 Roon 服务器 → 全屏显示封面
 - **切歌 200ms 内检测，1-3s 内显示新封面**（v1 为 30-60s）
@@ -108,28 +112,6 @@ RoonCoverDisplay_v2/
 ├── wifi_config.example.h   # 凭据模板 (复制为 wifi_config.h)
 ├── pinout.md               # V4 引脚映射
 └── README.md               # 本文件
-```
-
-## API 说明
-
-| 端点 | 说明 | 何时调用 |
-|------|------|----------|
-| `GET /api/status` | 当前播放状态 (含 `image_key`, `is_playing`, `three_line`) | 每 200ms 一次 |
-| `GET /roonapi/getImage?image_key=xxx&albumName=xxx` | 获取专辑封面 (JPEG) | 歌名/`image_key` 变化时 |
-
-`/api/status` 返回 JSON 示例：
-
-```json
-{
-  "connected": true,
-  "is_playing": true,
-  "image_key": "10b0f32afee89349d1fffd54914f5bc1",
-  "three_line": {
-    "line1": "歌曲名",
-    "line2": "艺术家",
-    "line3": "专辑名"
-  }
-}
 ```
 
 
