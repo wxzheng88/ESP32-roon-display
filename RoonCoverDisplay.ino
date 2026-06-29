@@ -1,299 +1,390 @@
 /**
- * Roon Cover Display
- * ==================
- * 硬件: Waveshare ESP32-S3-Touch-LCD-4 V4 (非触摸版)
- * 屏幕: ST7701, 480×480, RGB 并行接口
- * 功能: 连接 RoonCoverArt 服务, 全屏显示当前播放专辑封面
- *       任意分辨率自动缩放, 切歌实时刷新, 断线自动重连
- *
- * 依赖库 (Arduino IDE 库管理器安装):
- *   - LovyanGFX  (by lovyan03)
- *   - ArduinoJson (v7.x)
- *
- * Arduino IDE 配置:
- *   Board: ESP32S3 Dev Module
- *   PSRAM: Enable
- *   USB CDC On Boot: Enabled
- *   Partition Scheme: Huge APP (3MB NO OTA/1MB SPIFFS)
- *
- * 详见 README.md 和 docs/pinout.md
+ * Roon Cover Display v2
+ * =====================
+ * Hardware: Waveshare ESP32-S3-Touch-LCD-4 V4 (non-touch)
+ * Display:  ST7701, 480x480, RGB parallel
+ * Features:
+ *   - Full-screen cover art during playback
+ *   - NTP clock (UTC+8) shown 15s after playback stops
+ *   - Non-blocking image download — reacts instantly to track changes
+ *   - Chinese date / weekday via U8g2 CJK font
  */
 
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include <Wire.h>
+#include <time.h>
+#include <U8g2_for_Adafruit_GFX.h>
+
+#include "boot_logo.h"
 
 #define LGFX_USE_V1
 #include <LovyanGFX.hpp>
 #include <lgfx/v1/platforms/esp32s3/Panel_RGB.hpp>
 #include <lgfx/v1/platforms/esp32s3/Bus_RGB.hpp>
 
-// ===== 用户配置 (修改这 4 行为你的网络信息) =====
-const char* WIFI_SSID     = "*****";   // wifi ssid
-const char* WIFI_PASS     = "*****";   // wifi password
-const char* SERVER_HOST   = "*****";   // RoonCoverArt IP地址
-const int   SERVER_PORT   = *****;     // RoonCoverArt 端口号
+#include "wifi_config.h"
 
-// ===== 系统参数 =====
-const int   POLL_INTERVAL = 200;    // 轮询间隔 (ms), 200=近乎实时
-const int   WIFI_RETRY_MS = 3000;   // WiFi 重试间隔 (ms)
+// ===================== Configuration =====================
+const int  POLL_INTERVAL       = 200;
+const int  WIFI_RETRY_MS       = 3000;
+const int  IDLE_TO_CLOCK_MS    = 15000;
+const long DL_TOTAL_TIMEOUT_MS = 30000;
+const long GMT_OFFSET_SEC      = 8 * 3600;
+const char* NTP_SERVER        = "pool.ntp.org";
 
-// ===== TCA9554 IO 扩展器 (V4: I2C addr=0x24, SDA=GPIO15, SCL=GPIO7) =====
+// ===================== Forward declarations =====================
+enum AppState { STATE_COVER, STATE_CLOCK };
+struct StatusInfo { bool ok; bool isPlaying; String imageKey; String title; String album; };
+void enterState(AppState s);
+void showStatus(const char* msg, uint16_t color);
+void showLogo();
+String urlEncode(const String& s);
+bool downloadImage(const String& url);
+void abortDownload();
+void startDownload(const String& url);
+bool tickDownload();
+StatusInfo pollStatus();
+String buildImageUrl(const String& key, const String& album);
+void showClock();
+
+// ===================== Globals =====================
+AppState          state              = STATE_COVER;
+unsigned long     stateEnteredMs     = 0;
+unsigned long     lastPlayingSeenMs  = 0;
+unsigned long     lastClockTickMs    = 0;
+int               lastClockMinute    = -1;
+String            prevKey            = "";
+String            prevTitle          = "";
+unsigned long     lastPoll           = 0;
+
+enum DlState { DL_IDLE, DL_STREAM, DL_DECODE };
+DlState           dlState     = DL_IDLE;
+HTTPClient*       dlHttp      = nullptr;
+WiFiClient*       dlStream    = nullptr;
+uint8_t*          dlBuf       = nullptr;
+size_t            dlPos       = 0;
+size_t            dlSize      = 0;
+unsigned long     dlStartMs   = 0;
+
+const char* WK_CN[] = {"周日","周一","周二","周三","周四","周五","周六"};
+
+// ===================== TCA9554 =====================
 void tca9554_init() {
-  Wire.begin(15, 7);
-  Wire.setClock(400000);
-  // 先写输出寄存器 (全部拉高), 再写方向寄存器 (0x3A)
-  Wire.beginTransmission(0x24);
-  Wire.write(0x02);
-  Wire.write(0xff);
-  Wire.endTransmission();
-  Wire.beginTransmission(0x24);
-  Wire.write(0x03);
-  Wire.write(0x3a);
-  Wire.endTransmission();
+  Wire.begin(15, 7); Wire.setClock(400000);
+  Wire.beginTransmission(0x24); Wire.write(0x02); Wire.write(0xff); Wire.endTransmission();
+  Wire.beginTransmission(0x24); Wire.write(0x03); Wire.write(0x3a); Wire.endTransmission();
 }
 
-// ===== ST7701 显示屏 (3-wire SPI 初始化 + RGB 并行数据) =====
-class LGFX : public lgfx::LGFX_Device {
+// ===================== Display =====================
+class LGFX : public lgfx::LGFX_Device
+{
 public:
-  lgfx::Bus_RGB      _bus;
-  lgfx::Panel_ST7701 _panel;
-  LGFX() {
+  lgfx::Bus_RGB   _bus_instance;
+  lgfx::Panel_ST7701 _panel_instance;
+  LGFX(void)
+  {
     {
-      auto p = _panel.config();
-      p.memory_width  = 480;
-      p.memory_height = 480;
-      p.panel_width   = 480;
-      p.panel_height  = 480;
-      p.offset_x = 0;
-      p.offset_y = 0;
-      p.offset_rotation = 0;
-      p.readable  = false;
-      p.invert    = false;
-      p.rgb_order = false;
-      _panel.config(p);
+      auto panel_cfg = _panel_instance.config();
+      panel_cfg.memory_width  = 480;
+      panel_cfg.memory_height = 480;
+      panel_cfg.panel_width   = 480;
+      panel_cfg.panel_height  = 480;
+      panel_cfg.offset_x      = 0;
+      panel_cfg.offset_y      = 0;
+      panel_cfg.offset_rotation = 0;
+      panel_cfg.readable      = false;
+      panel_cfg.invert        = false;
+      panel_cfg.rgb_order     = false;
+      _panel_instance.config(panel_cfg);
     }
     {
-      auto d = _panel.config_detail();
-      d.pin_cs   = 42;
-      d.pin_sclk = 2;
-      d.pin_mosi = 1;
-      d.use_psram = 2;
-      _panel.config_detail(d);
+      auto panel_detail = _panel_instance.config_detail();
+      panel_detail.pin_cs   = 42;
+      panel_detail.pin_sclk = 2;
+      panel_detail.pin_mosi = 1;
+      panel_detail.use_psram = 2;
+      _panel_instance.config_detail(panel_detail);
     }
     {
-      auto c = _bus.config();
-      c.panel = &_panel;
-      // RGB565 数据线
-      c.pin_d0=5;   c.pin_d1=45;  c.pin_d2=48;  c.pin_d3=47;  c.pin_d4=21;
-      c.pin_d5=14;  c.pin_d6=13;  c.pin_d7=12;  c.pin_d8=11;  c.pin_d9=10;  c.pin_d10=9;
-      c.pin_d11=46; c.pin_d12=3;  c.pin_d13=8;  c.pin_d14=18; c.pin_d15=17;
-      // 同步信号
-      c.pin_henable = 40;
-      c.pin_vsync   = 39;
-      c.pin_hsync   = 38;
-      c.pin_pclk    = 41;
-      // 时序参数
-      c.freq_write       = 12000000;
-      c.pclk_active_neg  = 0;
-      c.hsync_polarity   = 1;
-      c.hsync_front_porch = 10;
-      c.hsync_pulse_width = 8;
-      c.hsync_back_porch  = 50;
-      c.vsync_polarity   = 1;
-      c.vsync_front_porch = 10;
-      c.vsync_pulse_width = 8;
-      c.vsync_back_porch  = 20;
-      c.pclk_idle_high   = 0;
-      c.de_idle_high     = 1;
-      _bus.config(c);
+      auto bus_cfg = _bus_instance.config();
+      bus_cfg.panel       = &_panel_instance;
+      bus_cfg.pin_d0      = 5;   bus_cfg.pin_d1      = 45;
+      bus_cfg.pin_d2      = 48;  bus_cfg.pin_d3      = 47;
+      bus_cfg.pin_d4      = 21;  bus_cfg.pin_d5      = 14;
+      bus_cfg.pin_d6      = 13;  bus_cfg.pin_d7      = 12;
+      bus_cfg.pin_d8      = 11;  bus_cfg.pin_d9      = 10;
+      bus_cfg.pin_d10     = 9;   bus_cfg.pin_d11     = 46;
+      bus_cfg.pin_d12     = 3;   bus_cfg.pin_d13     = 8;
+      bus_cfg.pin_d14     = 18;  bus_cfg.pin_d15     = 17;
+      bus_cfg.pin_henable = 40;  bus_cfg.pin_vsync   = 39;
+      bus_cfg.pin_hsync   = 38;  bus_cfg.pin_pclk    = 41;
+      bus_cfg.freq_write  = 12000000;
+      bus_cfg.pclk_active_neg = 0;
+      bus_cfg.hsync_polarity      = 1;
+      bus_cfg.hsync_front_porch   = 10;
+      bus_cfg.hsync_pulse_width   = 8;
+      bus_cfg.hsync_back_porch    = 50;
+      bus_cfg.vsync_polarity      = 1;
+      bus_cfg.vsync_front_porch   = 10;
+      bus_cfg.vsync_pulse_width   = 8;
+      bus_cfg.vsync_back_porch    = 20;
+      bus_cfg.pclk_idle_high      = 0;
+      bus_cfg.de_idle_high        = 1;
+      _bus_instance.config(bus_cfg);
     }
-    _panel.setBus(&_bus);
-    setPanel(&_panel);
+    _panel_instance.setBus(&_bus_instance);
+    setPanel(&_panel_instance);
   }
 };
 
-LGFX display;
-String       prevKey = "";
-unsigned long lastPoll = 0;
+static LGFX display;
 
-// ===== 右上角状态提示 =====
-void showRightTop(const char* msg, uint16_t color) {
-  display.setTextSize(2);
-  display.setTextColor(color);
-  display.setTextDatum(TR_DATUM);
-  display.fillRect(0, 0, 480, 22, TFT_BLACK);
-  display.drawString(msg, 476, 2);
+class GFXAdapter : public Adafruit_GFX
+{
+  LGFX* _lgfx;
+public:
+  GFXAdapter(LGFX* lgfx) : Adafruit_GFX(480, 480), _lgfx(lgfx) {}
+  void drawPixel(int16_t x, int16_t y, uint16_t color) override
+  {
+    _lgfx->drawPixel((int32_t)x, (int32_t)y, color);
+  }
+};
+
+static GFXAdapter gfxAdapter(&display);
+U8G2_FOR_ADAFRUIT_GFX u8g2;
+
+// ===================== Implementations =====================
+
+void enterState(AppState s) {
+  if (state == s) return;
+  state = s;
+  stateEnteredMs = millis();
+  if (s == STATE_CLOCK) {
+    lastClockMinute = -1;
+    display.fillScreen(TFT_BLACK);
+  } else if (s == STATE_COVER) {
+    display.fillScreen(TFT_BLACK);
+    prevKey = "";
+  }
 }
 
-// ===== URL 编码 =====
+void showStatus(const char* msg, uint16_t color) {
+  display.setTextSize(2);
+  display.setTextColor(color);
+  display.setTextDatum(BR_DATUM);
+  display.fillRect(280, 420, 200, 60, TFT_BLACK);
+  display.drawString(msg, 470, 470);
+}
+
+void showLogo() {
+  uint8_t* logoBuf = (uint8_t*)ps_malloc(bootLogoLen);
+  if (logoBuf) {
+    memcpy_P(logoBuf, bootLogoData, bootLogoLen);
+    display.drawJpg(logoBuf, bootLogoLen, LOGO_X, LOGO_Y, LOGO_W, LOGO_H, 0, 0, 0, 0);
+    free(logoBuf);
+  }
+}
+
 String urlEncode(const String& s) {
-  String e;
-  e.reserve(s.length() * 3);
+  String e; e.reserve(s.length() * 3);
   for (size_t i = 0; i < s.length(); i++) {
     char c = s.charAt(i);
-    if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~')
-      e += c;
-    else if (c == ' ')
-      e += "%20";
-    else {
-      char b[4];
-      snprintf(b, sizeof(b), "%%%02X", (unsigned char)c);
-      e += b;
-    }
+    if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') e += c;
+    else if (c == ' ') e += "%20";
+    else { char b[4]; snprintf(b, sizeof(b), "%%%02X", (unsigned char)c); e += b; }
   }
   return e;
 }
 
-// ===== WiFi 连接 =====
-void connectWiFi() {
-  display.fillScreen(TFT_BLACK);
-  showRightTop("WiFi...", TFT_WHITE);
-  Serial.print("WiFi...");
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(WIFI_SSID, WIFI_PASS);
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(WIFI_RETRY_MS);
-    Serial.print(".");
-  }
-  Serial.println("\nIP: " + WiFi.localIP().toString());
-  showRightTop("WiFi OK", TFT_GREEN);
-  delay(1000);
-  display.fillScreen(TFT_BLACK);
+void abortDownload() {
+  if (dlHttp) { dlHttp->end(); delete dlHttp; dlHttp = nullptr; }
+  if (dlBuf)  { free(dlBuf); dlBuf = nullptr; }
+  dlStream  = nullptr;
+  dlState   = DL_IDLE;
 }
 
-// ===== 下载 JPEG → 解码缩放 → 全屏显示 =====
-bool downloadImage(const String& url) {
+void startDownload(const String& url) {
+  if (dlState != DL_IDLE) abortDownload();
+  dlHttp = new HTTPClient();
+  dlHttp->begin(url);
+  dlHttp->setTimeout(15000);
+  if (dlHttp->GET() != 200) { abortDownload(); return; }
+  int len = dlHttp->getSize();
+  dlSize = (len > 0) ? (size_t)len : (6UL * 1024 * 1024);
+  dlBuf  = (uint8_t*)ps_malloc(dlSize);
+  if (!dlBuf) { abortDownload(); return; }
+  dlStream  = dlHttp->getStreamPtr();
+  dlPos     = 0;
+  dlStartMs = millis();
+  dlState   = DL_STREAM;
+}
+
+bool tickDownload() {
+  if (dlState == DL_IDLE) return false;
+  if (millis() - dlStartMs > DL_TOTAL_TIMEOUT_MS) { abortDownload(); return false; }
+  if (dlState == DL_STREAM) {
+    if (!dlStream) { abortDownload(); return false; }
+    while (dlStream->available() && dlPos < dlSize) {
+      int c = dlStream->read();
+      if (c >= 0) dlBuf[dlPos++] = (uint8_t)c;
+    }
+    if (!dlStream->connected() && !dlStream->available()) {
+      if (dlPos > 0) { dlState = DL_DECODE; }
+      else { abortDownload(); return false; }
+    }
+  }
+  if (dlState == DL_DECODE) {
+    display.drawJpg(dlBuf, dlPos, 0, 0, 480, 480, 0, 0, 0, 0);
+    free(dlBuf); dlBuf = nullptr;
+    if (dlHttp) { dlHttp->end(); delete dlHttp; dlHttp = nullptr; }
+    dlState = DL_IDLE;
+    return true;
+  }
+  return false;
+}
+
+StatusInfo pollStatus() {
+  StatusInfo info = {false, false, "", "", ""};
   HTTPClient http;
-  http.begin(url);
-  http.setTimeout(15000);
-  if (http.GET() != 200) {
-    Serial.printf("HTTP %d\n", http.GET());
-    http.end();
-    return false;
-  }
-  int len = http.getSize();
-  WiFiClient* s = http.getStreamPtr();
-  size_t sz = (len > 0) ? len : (6UL * 1024 * 1024);
-  uint8_t* buf = (uint8_t*)ps_malloc(sz);
-  if (!buf) { http.end(); return false; }
-  size_t pos = 0;
-  while (s->connected() || s->available()) {
-    while (s->available() && pos < sz) buf[pos++] = s->read();
-    if (pos >= sz) break;
-    delay(1);
-  }
-  if (pos == 0) { free(buf); http.end(); return false; }
-  // 强制拉伸填满 480×480 (末尾 4 个 0 = 自动检测 JPEG 原始尺寸)
-  display.drawJpg(buf, pos, 0, 0, 480, 480, 0, 0, 0, 0);
-  free(buf);
-  http.end();
-  Serial.printf("Cover %d bytes\n", pos);
-  return true;
+  String u = "http://" + String(SERVER_HOST) + ":" + SERVER_PORT + "/api/status";
+  http.begin(u); http.setTimeout(5000);
+  if (http.GET() != 200) { http.end(); return info; }
+  String js = http.getString(); http.end();
+  JsonDocument doc;
+  if (deserializeJson(doc, js)) return info;
+  info.ok        = true;
+  info.isPlaying = doc["is_playing"] | false;
+  const char* k  = doc["image_key"];
+  if (k) info.imageKey = String(k);
+  const char* t  = doc["three_line"]["line1"];
+  if (t) info.title = String(t);
+  const char* a  = doc["three_line"]["line3"];
+  if (a) info.album = String(a);
+  return info;
 }
 
-// ===== setup =====
-void setup() {
-  Serial.begin(115200);
-  delay(500);
-  Serial.println("\nRoon Cover Display");
+String buildImageUrl(const String& key, const String& album) {
+  String u = "http://" + String(SERVER_HOST) + ":" + SERVER_PORT +
+             "/roonapi/getImage?image_key=" + key;
+  if (album.length()) u += "&albumName=" + urlEncode(album);
+  return u;
+}
 
-  // 1. TCA9554
-  tca9554_init();
+void showClock() {
+  time_t t = time(nullptr);
+  if (t < 1700000000) return;
+  struct tm tm; localtime_r(&t, &tm);
+  if (tm.tm_min == lastClockMinute) return;
+  lastClockMinute = tm.tm_min;
 
-  // 2. 显示屏
-  display.init();
-  display.setBrightness(255);
-
-  // 3. 启动画面
+  char buf[16];
   display.fillScreen(TFT_BLACK);
-  display.setTextSize(3);
+  strftime(buf, sizeof(buf), "%H:%M", &tm);
+  display.setTextSize(8);
   display.setTextColor(TFT_WHITE);
   display.setTextDatum(MC_DATUM);
-  display.drawString("roon display", 240, 240);
-  delay(3000);
-  display.fillScreen(TFT_BLACK);
+  display.drawString(buf, 240, 200);
 
-  // 4. WiFi
-  connectWiFi();
-  display.fillScreen(TFT_BLACK);
-
-  // 5. 等待 Roon 服务器
-  while (true) {
-    showRightTop("Roon...", TFT_YELLOW);
-    HTTPClient http;
-    String u = String("http://") + SERVER_HOST + ":" + SERVER_PORT + "/api/status";
-    http.begin(u);
-    http.setTimeout(5000);
-    if (http.GET() == 200) {
-      String json = http.getString();
-      http.end();
-      JsonDocument doc;
-      if (!deserializeJson(doc, json)) {
-        const char* key = doc["image_key"];
-        if (key && strlen(key)) {
-          prevKey = String(key);
-          String imgUrl = String("http://") + SERVER_HOST + ":" + SERVER_PORT
-                        + "/roonapi/getImage?image_key=" + key;
-          const char* album = doc["three_line"]["line3"];
-          if (album && strlen(album))
-            imgUrl += "&albumName=" + urlEncode(String(album));
-          if (downloadImage(imgUrl)) break;
-        }
-      }
-    } else {
-      http.end();
-    }
-    delay(2000);
-  }
-  Serial.println("Ready.");
+  char dateStr[64];
+  snprintf(dateStr, sizeof(dateStr), "%d年%d月%d日 %s",
+           tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, WK_CN[tm.tm_wday]);
+  u8g2.setFont(u8g2_font_wqy12_t_chinese3);
+  u8g2.setForegroundColor(0xBDF7);
+  uint16_t w = u8g2.getUTF8Width(dateStr);
+  u8g2.setCursor((480 - w) / 2, 340);
+  u8g2.print(dateStr);
 }
 
-// ===== loop =====
+// ===================== Setup =====================
+void setup() {
+  Serial.begin(115200); delay(500);
+  tca9554_init();
+  display.init();
+  display.setBrightness(255);
+  u8g2.begin(gfxAdapter);
+  u8g2.setFont(u8g2_font_wqy12_t_chinese3);
+
+  showLogo();
+
+  showStatus("WiFi...", TFT_WHITE);
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(WIFI_SSID, WIFI_PASS);
+  for (int i = 0; i < 20 && WiFi.status() != WL_CONNECTED; i++) delay(1000);
+  if (WiFi.status() == WL_CONNECTED) showStatus("WiFi OK", TFT_GREEN);
+
+  configTime(GMT_OFFSET_SEC, 0, NTP_SERVER);
+
+  showStatus("Roon...", TFT_YELLOW);
+  int retry = 0;
+  while (true) {
+    StatusInfo info = pollStatus();
+    if (info.ok && info.imageKey.length()) {
+      prevKey           = info.imageKey;
+      prevTitle         = info.title;
+      lastPlayingSeenMs = millis();
+      startDownload(buildImageUrl(info.imageKey, info.album));
+      unsigned long t0 = millis();
+      while (dlState != DL_IDLE && millis() - t0 < 30000) {
+        tickDownload();
+        delay(10);
+      }
+      if (dlState == DL_IDLE) { retry = 0; break; }
+    }
+    delay(2000);
+    retry++;
+    if (retry >= 3) { showStatus("Offline", TFT_RED); while (true) delay(1000); }
+  }
+
+  state          = STATE_COVER;
+  stateEnteredMs = millis();
+}
+
+// ===================== Loop =====================
 void loop() {
   unsigned long now = millis();
+
+  if (state == STATE_COVER) {
+    tickDownload();
+  } else {
+    if (now - lastClockTickMs > 1000) {
+      lastClockTickMs = now;
+      showClock();
+    }
+  }
+
   if (now - lastPoll < POLL_INTERVAL) { delay(10); return; }
   lastPoll = now;
 
   if (WiFi.status() != WL_CONNECTED) {
-    display.fillScreen(TFT_BLACK);
-    connectWiFi();
-    display.fillScreen(TFT_BLACK);
+    showStatus("WiFi...", TFT_WHITE);
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(WIFI_SSID, WIFI_PASS);
+    while (WiFi.status() != WL_CONNECTED) delay(WIFI_RETRY_MS);
     return;
   }
 
-  String su = String("http://") + SERVER_HOST + ":" + SERVER_PORT + "/api/status";
-  HTTPClient http;
-  http.begin(su);
-  http.setTimeout(5000);
+  StatusInfo info = pollStatus();
+  if (!info.ok) return;
+  if (info.isPlaying) lastPlayingSeenMs = now;
 
-  if (http.GET() != 200) {
-    http.end();
-    display.fillScreen(TFT_BLACK);
-    showRightTop("Roon...", TFT_YELLOW);
-    return;
-  }
-
-  String js = http.getString();
-  http.end();
-  JsonDocument doc;
-  if (deserializeJson(doc, js)) return;
-
-  const char* key = doc["image_key"];
-  if (!key || !strlen(key)) return;
-  if (prevKey == String(key)) return;
-
-  prevKey = String(key);
-
-  String imgUrl = String("http://") + SERVER_HOST + ":" + SERVER_PORT
-                + "/roonapi/getImage?image_key=" + key;
-  const char* album = doc["three_line"]["line3"];
-  if (album && strlen(album))
-    imgUrl += "&albumName=" + urlEncode(String(album));
-
-  if (!downloadImage(imgUrl)) {
-    display.fillScreen(TFT_BLACK);
-    showRightTop("Roon...", TFT_YELLOW);
+  if (state == STATE_COVER) {
+    bool keyChanged   = info.imageKey.length() && info.imageKey != prevKey;
+    bool titleChanged = info.title.length()   && info.title   != prevTitle;
+    if (keyChanged || titleChanged) {
+      prevKey   = info.imageKey;
+      prevTitle = info.title;
+      startDownload(buildImageUrl(info.imageKey, info.album));
+    }
+    if (now - lastPlayingSeenMs > IDLE_TO_CLOCK_MS) {
+      enterState(STATE_CLOCK);
+    }
+  } else {
+    if (info.isPlaying) {
+      enterState(STATE_COVER);
+    } else {
+      showClock();
+    }
   }
 }

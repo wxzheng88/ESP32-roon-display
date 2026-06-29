@@ -8,7 +8,7 @@ build/
 *.bootloader.bin
 *.partitions.bin
 
-# 隐私文件 — 包含 WiFi 密码等
+# 隐私文件 - 包含 WiFi 密码等
 wifi_config.h
 
 # IDE

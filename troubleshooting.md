@@ -1,5 +1,7 @@
 # 踩坑记录
 
+> 坑 1-8 继承自 v1 (引脚/编译相关)。坑 9+ 是 v2 新增。
+
 ## 坑 1: V1 vs V4 引脚不同 (耗时最长)
 
 ### 现象
@@ -121,4 +123,83 @@ RoonCoverArt 的 API 返回的专辑名在 `three_line.line3`，而不是 `album
 ### 解决
 ```cpp
 const char* album = doc["three_line"]["line3"];
+```
+
+## 坑 9 (v2): 切歌延迟 30-60s
+
+### 现象
+v1 代码在服务器返回新 `image_key` 后 30-60s 才显示新封面，但 RoonCoverArt 网页端是即时的。
+
+### 原因
+v1 的 `downloadImage()` 是**同步阻塞**调用。loop() 在下载旧图期间完全停顿：
+```
+T=0s    播放 A, 开始下载 A (假设耗时 5s)
+T=2s    用户切到 B  ← 此时 loop() 还在下载 A
+T=5s    A 下载完, 显示 A (过时)
+T=5.1s  轮询, 发现 image_key=bbb, 启动下载 B
+T=10.1s 显示 B
+```
+如果服务器 `image_key` 又是懒更新（要等抓到图才更新 `image_key`），则感知延迟 = 服务器抓图时间 + 本地下载 = 30-60s。
+
+### 解决 (v2)
+1. **非阻塞下载状态机** — `tickDownload()` 每帧推进，loop() 永不阻塞
+2. **新图 abort 旧下载** — `startDownload()` 检测到正在下载时立即 `abortDownload()`
+3. **30s 总超时** — 防止服务器 stall
+4. **歌名作为变化信号** — 不止 `image_key`，`three_line.line1` 变化也触发
+
+## 坑 10 (v2): `s->read()` 返回 -1 污染 buffer
+
+### 现象
+v1 `downloadImage()` 的 `while(s->available()&&pos<sz)buf[pos++]=s->read();` 在某些情况下会把 -1 (0xFF) 写入 JPEG 数据，导致解码失败或显示乱图。
+
+### 原因
+`s->read()` 在流没有数据但 `available()` 返回非零的边角情况可能返回 -1。
+
+### 解决 (v2)
+```cpp
+int c = dlStream->read();
+if (c >= 0) dlBuf[dlPos++] = (uint8_t)c;
+```
+
+## 坑 11 (v2): NTP 首次同步延迟
+
+### 现象
+上电后时钟模式迟迟不显示时间，显示 1970 或空白。
+
+### 原因
+`configTime()` 异步发起 NTP 请求，但 `time()` 立即调用会返回 0 (1970-01-01) 直到同步完成。
+
+### 解决
+代码中已检查 `if (t < 1700000000) return;`（1700000000 = 2023-11-14），NTP 未同步则不绘制。同步通常 1-3 秒完成。
+
+## 坑 12 (v2): U8g2 默认字体无 CJK
+
+### 现象
+用 `display.drawString()` 写中文显示成方块 □。
+
+### 原因
+LovyanGFX 默认字体是 6x8 ASCII 位图，无中文。
+
+### 解决
+安装 U8g2 + U8g2_for_Adafruit_GFX，指定中文字体：
+```cpp
+u8g2.setFont(u8g2_font_wqy12_t_chinese3);  // 文泉驿 12px, ~50KB Flash
+u8g2.setForegroundColor(0xBDF7);
+u8g2.setCursor(x, y);
+u8g2.print("2026年6月24日 周三");
+```
+
+## 坑 13 (v2): `getUTF8Width` 与 `setCursor` 单位
+
+### 现象
+居中绘制中文日期时位置偏差。
+
+### 原因
+`getUTF8Width()` 返回的是**像素宽度**（已计入 CJK 全角宽度 = 2x ASCII 宽度），与 `setCursor(x, y)` 像素单位一致。但 `getUTF8Width` 返回 `uint16_t`，最大 65535，对 480×480 屏幕够用。
+
+### 解决
+直接用像素相减：
+```cpp
+uint16_t w = u8g2.getUTF8Width(dateStr);
+u8g2.setCursor((480 - w) / 2, 340);
 ```
