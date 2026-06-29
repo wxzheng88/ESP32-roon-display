@@ -4,11 +4,11 @@
 
 ## 效果
 
-<img src="display/logo.jpg" width="480">
-<img src="display/cover.jpg" width="480">
-<img src="display/time.jpg" width="480">
-<img src="display/display-1.jpg" width="480">
-<img src="display/display-2.jpg" width="480">
+外观<img src="display/cover.jpg" width="480">
+logo<img src="display/logo.jpg" width="480">
+时钟<img src="display/time.jpg" width="480">
+显示1<img src="display/display-1.jpg" width="480">
+显示2<img src="display/display-2.jpg" width="480">
 
 - 上电 → 启动画面 "roon display" → 自动连接 WiFi → 连接 Roon 服务器 → 全屏显示封面
 - **切歌 200ms 内检测，1-3s 内显示新封面**（v1 为 30-60s）
