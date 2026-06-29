@@ -1,9 +1,6 @@
-# Roon Cover Display v2 — ROON 桌面专辑封面显示器
+# Roon Cover Display — ROON 桌面专辑封面显示器
 
 基于微雪 ESP32-S3-Touch-LCD-4 (V4 非触摸版) 的 Roon 专辑封面桌面小摆件。连接局域网内的 RoonCoverArt 服务器，在 480×480 屏幕上实时显示当前播放曲目的专辑封面，**空闲时自动切换为 NTP 时钟**。
-
-> v2 相对 v1 的改进：响应延迟从 30-60s 降到 ~1s，加入 NTP 时钟 + 中文日期。
-> 详见末尾"v1 -> v2 改动"。
 
 ## 效果
 
@@ -105,7 +102,6 @@ RoonCoverDisplay_v2/
 ├── boot_logo.h             # 启动画面
 ├── wifi_config.example.h   # 凭据模板 (复制为 wifi_config.h)
 ├── pinout.md               # V4 引脚映射
-├── troubleshooting.md      # 踩坑记录
 └── README.md               # 本文件
 ```
 
@@ -131,41 +127,5 @@ RoonCoverDisplay_v2/
 }
 ```
 
-## v1 -> v2 主要改动
-
-### 性能：消除 30-60s 切歌延迟
-
-v1 的 `downloadImage()` 是**同步阻塞**调用，loop() 在下载期间完全停顿。当用户切歌时，新 `image_key` 必须等当前下载完成才能被检测到，造成 3-10s 延迟。如果服务器 `image_key` 又是懒更新（要等抓到图才更新），可达 30-60s。
-
-v2 引入**非阻塞下载状态机**：
-
-- `DL_IDLE` → `DL_STREAM` → `DL_DECODE` → `DL_IDLE`
-- `loop()` 每帧推进，**永不阻塞超过几十毫秒**
-- 新图到达时 `startDownload()` 立即 `abortDownload()` 旧下载
-- 加入 30s 总超时防止服务器 stall 死循环
-- 加入 `s->read()` 返回 -1 的防护，避免 buffer 污染
-
-### 双重变化信号
-
-v1 只检测 `image_key` 变化。v2 同时检测 `three_line.line1`（歌名）变化：
-
-- 同一专辑内换歌也能立即重新拉图（`image_key` 没变但歌名变了）
-- 即使服务器 `image_key` 更新延迟，歌名通常先更新
-
-### NTP 时钟 + CJK 中文
-
-- 空闲 15s 后自动进入时钟模式
-- 使用 `configTime()` 同步 NTP (UTC+8 硬编码)
-- U8g2 `wqy12_t_chinese3` 字体渲染 "2026年6月24日 周三"
-- 大字 HH:MM 居中显示 (textSize 8)
-- 内部分钟节流，分钟变化时才重绘
-
-## 已知限制
-
-- NTP 时区硬编码 UTC+8，如需其他时区改 `GMT_OFFSET_SEC`
-- 时钟屏保**不**调低背光 — 480×480 全亮约 60-80mA
-- 服务器端 `image_key` 若懒更新，v2 仍需等待（无解，需改服务器）
-
-## License
 
 MIT
