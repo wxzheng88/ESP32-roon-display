@@ -5,9 +5,9 @@
 #ifndef WIFI_CONFIG_H
 #define WIFI_CONFIG_H
 
-#define WIFI_SSID     "your_wifi_name"
-#define WIFI_PASS     "your_wifi_password"
-#define SERVER_HOST   "192.168.x.x"
-#define SERVER_PORT   3666
+#define WIFI_SSID     "your_wifi_name" //wifi名
+#define WIFI_PASS     "your_wifi_password" //wifi密码
+#define SERVER_HOST   "x.x.x.x"  //部署的roon插件IP地址
+#define SERVER_PORT   3666  //部署的roon插件端口号
 
 #endif
