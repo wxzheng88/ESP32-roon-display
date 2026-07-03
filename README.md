@@ -19,9 +19,9 @@
 - 显示2
 <img src="display/display-2.jpg" width="480">
 
-- 上电 → 启动画面 "roon display" → 自动连接 WiFi → 连接 Roon 服务器 → 全屏显示封面
-- **切歌 200ms 内检测，1-3s 内显示新封面**（v1 为 30-60s）
-- **停止播放 15s 后自动切换为时钟**（大号 HH:MM + 中文 "年月日 周X"）
+- 上电 → 启动画面 "roon logo" → 自动连接 WiFi → 连接 Roon 服务器 → 全屏显示封面
+- **切歌 1-3s 内显示新封面**
+- **停止播放 15s 后自动切换为时钟**（大号 HH:MM ）
 - 任何曲目开始播放立即返回全屏封面
 - 服务器离线/断网自动重连
 
@@ -35,13 +35,11 @@
 | 存储 | 16MB Flash + 8MB PSRAM |
 | 连接 | WiFi 2.4GHz |
 
-> ⚠️ **重要：V1 (触摸版) 和 V4 (非触摸版) 的引脚分配完全不同。** 本代码仅适用于 V4 版。
-
 > ⚠️ 开发板 wiki：https://www.waveshare.net/wiki/ESP32-S3-Touch-LCD-4
 
 ## 依赖服务
 
-需要局域网内有 [RoonCoverArt](https://github.com/epochaudio/RoonCoverArt_Square_Frame_Docker) v3.1.3+ 服务器运行（需要 `/api/status` + `/roonapi/getImage` 接口）。
+需要局域网内有 [RoonCoverArt](https://github.com/epochaudio/RoonCoverArt_Square_Frame_Docker)服务器运行（需要 `/api/status` + `/roonapi/getImage` 接口）。
 
 ## 快速开始
 
@@ -114,5 +112,3 @@ RoonCoverDisplay_v2/
 └── README.md               # 本文件
 ```
 
-
-MIT
