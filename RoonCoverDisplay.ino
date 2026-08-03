@@ -230,7 +230,7 @@ bool tickDownload() {
       int c = dlStream->read();
       if (c >= 0) dlBuf[dlPos++] = (uint8_t)c;
     }
-    if (!dlStream->connected() && !dlStream->available()) {
+    if (dlPos >= dlSize || (!dlStream->connected() && !dlStream->available())) {
       if (dlPos > 0) { dlState = DL_DECODE; }
       else { abortDownload(); return false; }
     }
@@ -239,6 +239,7 @@ bool tickDownload() {
     display.drawJpg(dlBuf, dlPos, 0, 0, 480, 480, 0, 0, 0, 0);
     free(dlBuf); dlBuf = nullptr;
     if (dlHttp) { dlHttp->end(); delete dlHttp; dlHttp = nullptr; }
+    dlStream  = nullptr;
     dlState = DL_IDLE;
     return true;
   }
@@ -249,7 +250,7 @@ StatusInfo pollStatus() {
   StatusInfo info = {false, false, "", "", ""};
   HTTPClient http;
   String u = "http://" + String(SERVER_HOST) + ":" + SERVER_PORT + "/api/status";
-  http.begin(u); http.setTimeout(5000);
+  http.begin(u); http.setTimeout(1500);
   if (http.GET() != 200) { http.end(); return info; }
   String js = http.getString(); http.end();
   JsonDocument doc;
@@ -345,9 +346,14 @@ void setup() {
 void loop() {
   unsigned long now = millis();
 
-  if (state == STATE_COVER) {
+  // while a download is in flight, finish it before polling again
+  if (dlState != DL_IDLE) {
     tickDownload();
-  } else {
+    yield();
+    return;
+  }
+
+  if (state == STATE_CLOCK) {
     if (now - lastClockTickMs > 1000) {
       lastClockTickMs = now;
       showClock();
