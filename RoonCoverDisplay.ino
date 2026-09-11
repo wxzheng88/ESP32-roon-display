@@ -35,7 +35,7 @@ const long GMT_OFFSET_SEC      = 8 * 3600;
 const char* NTP_SERVER        = "pool.ntp.org";
 
 // ===================== Forward declarations =====================
-enum AppState { STATE_COVER, STATE_CLOCK };
+enum AppState { STATE_COVER, STATE_CLOCK, STATE_RETRY };
 struct StatusInfo { bool ok; bool isPlaying; String imageKey; String title; String album; };
 void enterState(AppState s);
 void showStatus(const char* msg, uint16_t color);
@@ -48,6 +48,7 @@ bool tickDownload();
 StatusInfo pollStatus();
 String buildImageUrl(const String& key, const String& album);
 void showClock();
+bool ensureWiFi();      // returns true when connected
 
 // ===================== Globals =====================
 AppState          state              = STATE_COVER;
@@ -58,6 +59,8 @@ int               lastClockMinute    = -1;
 String            prevKey            = "";
 String            prevTitle          = "";
 unsigned long     lastPoll           = 0;
+bool              firstPollDone      = false; // fix #7
+unsigned long     lastRetryMs         = 0;      // fix #3
 
 enum DlState { DL_IDLE, DL_STREAM, DL_DECODE };
 DlState           dlState     = DL_IDLE;
@@ -199,10 +202,12 @@ String urlEncode(const String& s) {
 }
 
 void abortDownload() {
-  if (dlHttp) { dlHttp->end(); delete dlHttp; dlHttp = nullptr; }
-  if (dlBuf)  { free(dlBuf); dlBuf = nullptr; }
-  dlStream  = nullptr;
+  if (dlStream) { dlStream->stop(); dlStream = nullptr; }
+  if (dlHttp)   { dlHttp->end(); delete dlHttp; dlHttp = nullptr; }
+  if (dlBuf)    { free(dlBuf); dlBuf = nullptr; }
   dlState   = DL_IDLE;
+  dlPos     = 0;
+  dlSize    = 0;
 }
 
 void startDownload(const String& url) {
@@ -210,7 +215,8 @@ void startDownload(const String& url) {
   dlHttp = new HTTPClient();
   dlHttp->begin(url);
   dlHttp->setTimeout(15000);
-  if (dlHttp->GET() != 200) { abortDownload(); return; }
+  int code = dlHttp->GET();
+  if (code != HTTP_CODE_OK) { abortDownload(); return; }
   int len = dlHttp->getSize();
   dlSize = (len > 0) ? (size_t)len : (6UL * 1024 * 1024);
   dlBuf  = (uint8_t*)ps_malloc(dlSize);
@@ -226,21 +232,29 @@ bool tickDownload() {
   if (millis() - dlStartMs > DL_TOTAL_TIMEOUT_MS) { abortDownload(); return false; }
   if (dlState == DL_STREAM) {
     if (!dlStream) { abortDownload(); return false; }
+    // chunk read: pull as much as possible per tick (was 1 byte/call, fix #4)
+    const size_t CHUNK = 4096;
     while (dlStream->available() && dlPos < dlSize) {
-      int c = dlStream->read();
-      if (c >= 0) dlBuf[dlPos++] = (uint8_t)c;
+      size_t room = dlSize - dlPos;
+      size_t want = (room < CHUNK) ? room : CHUNK;
+      size_t got  = dlStream->readBytes(dlBuf + dlPos, want);
+      if (got == 0) break;
+      dlPos += got;
     }
+    // stream finished when buffer full or remote closed + empty
     if (dlPos >= dlSize || (!dlStream->connected() && !dlStream->available())) {
-      if (dlPos > 0) { dlState = DL_DECODE; }
-      else { abortDownload(); return false; }
+      if (dlPos > 0) dlState = DL_DECODE;
+      else           { abortDownload(); return false; }
     }
   }
   if (dlState == DL_DECODE) {
     display.drawJpg(dlBuf, dlPos, 0, 0, 480, 480, 0, 0, 0, 0);
-    free(dlBuf); dlBuf = nullptr;
-    if (dlHttp) { dlHttp->end(); delete dlHttp; dlHttp = nullptr; }
-    dlStream  = nullptr;
+    if (dlStream) { dlStream->stop(); dlStream = nullptr; }
+    if (dlHttp)   { dlHttp->end(); delete dlHttp; dlHttp = nullptr; }
+    if (dlBuf)    { free(dlBuf); dlBuf = nullptr; }
     dlState = DL_IDLE;
+    dlPos   = 0;
+    dlSize  = 0;
     return true;
   }
   return false;
@@ -248,10 +262,21 @@ bool tickDownload() {
 
 StatusInfo pollStatus() {
   StatusInfo info = {false, false, "", "", ""};
-  HTTPClient http;
-  String u = "http://" + String(SERVER_HOST) + ":" + SERVER_PORT + "/api/status";
+  static HTTPClient http;
+  static String urlCache;
+  String u = urlCache;
+  if (u.length() == 0) {
+    u.reserve(96);
+    u = "http://";
+    u += SERVER_HOST;
+    u += ":";
+    u += SERVER_PORT;
+    u += "/api/status";
+    urlCache = u;
+  }
   http.begin(u); http.setTimeout(1500);
-  if (http.GET() != 200) { http.end(); return info; }
+  int code = http.GET();
+  if (code != HTTP_CODE_OK) { http.end(); return info; }
   String js = http.getString(); http.end();
   JsonDocument doc;
   if (deserializeJson(doc, js)) return info;
@@ -267,15 +292,32 @@ StatusInfo pollStatus() {
 }
 
 String buildImageUrl(const String& key, const String& album) {
-  String u = "http://" + String(SERVER_HOST) + ":" + SERVER_PORT +
-             "/roonapi/getImage?image_key=" + key;
-  if (album.length()) u += "&albumName=" + urlEncode(album);
+  String u;
+  u.reserve(160 + key.length() + album.length());
+  u = "http://";
+  u += SERVER_HOST;
+  u += ":";
+  u += SERVER_PORT;
+  u += "/roonapi/getImage?image_key=";
+  u += key;
+  if (album.length()) {
+    u += "&albumName=";
+    u += urlEncode(album);
+  }
   return u;
 }
 
 void showClock() {
   time_t t = time(nullptr);
-  if (t < 1700000000) return;
+  if (t < 1700000000) {
+    // NTP not yet synced — show hint so user knows it's alive
+    display.fillScreen(TFT_BLACK);
+    display.setTextSize(2);
+    display.setTextColor(TFT_WHITE);
+    display.setTextDatum(MC_DATUM);
+    display.drawString("NTP syncing...", 240, 240);
+    return;
+  }
   struct tm tm; localtime_r(&t, &tm);
   if (tm.tm_min == lastClockMinute) return;
   lastClockMinute = tm.tm_min;
@@ -299,6 +341,19 @@ void showClock() {
 }
 
 // ===================== Setup =====================
+bool ensureWiFi() {
+  if (WiFi.status() == WL_CONNECTED) return true;
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(WIFI_SSID, WIFI_PASS);
+  // give it up to ~15 seconds before yielding back
+  unsigned long t0 = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - t0 < 15000) {
+    delay(250);
+    yield();
+  }
+  return WiFi.status() == WL_CONNECTED;
+}
+
 void setup() {
   Serial.begin(115200); delay(500);
   tca9554_init();
@@ -310,36 +365,21 @@ void setup() {
   showLogo();
 
   showStatus("WiFi...", TFT_WHITE);
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(WIFI_SSID, WIFI_PASS);
-  for (int i = 0; i < 20 && WiFi.status() != WL_CONNECTED; i++) delay(1000);
-  if (WiFi.status() == WL_CONNECTED) showStatus("WiFi OK", TFT_GREEN);
-
+  if (!ensureWiFi()) {
+    // fix #2: WiFi failure must NOT silently fall through to Roon polling
+    showStatus("WiFi FAIL", TFT_RED);
+    delay(3000);
+    ESP.restart();
+  }
+  showStatus("WiFi OK", TFT_GREEN);
   configTime(GMT_OFFSET_SEC, 0, NTP_SERVER);
 
-  showStatus("Roon...", TFT_YELLOW);
-  int retry = 0;
-  while (true) {
-    StatusInfo info = pollStatus();
-    if (info.ok && info.imageKey.length()) {
-      prevKey           = info.imageKey;
-      prevTitle         = info.title;
-      lastPlayingSeenMs = millis();
-      startDownload(buildImageUrl(info.imageKey, info.album));
-      unsigned long t0 = millis();
-      while (dlState != DL_IDLE && millis() - t0 < 30000) {
-        tickDownload();
-        delay(10);
-      }
-      if (dlState == DL_IDLE) { retry = 0; break; }
-    }
-    delay(2000);
-    retry++;
-    if (retry >= 3) { showStatus("Offline", TFT_RED); while (true) delay(1000); }
-  }
-
-  state          = STATE_COVER;
+  // fix #3: NO infinite while-loop here. Hand control to loop()
+  // with STATE_RETRY, so the user is never bricked if the
+  // Roon server is temporarily down.
+  state          = STATE_RETRY;
   stateEnteredMs = millis();
+  lastRetryMs    = 0;  // force first attempt to happen in loop()
 }
 
 // ===================== Loop =====================
@@ -353,6 +393,48 @@ void loop() {
     return;
   }
 
+  // ---- STATE_RETRY: keep trying to acquire first cover, but throttled ----
+  if (state == STATE_RETRY) {
+    if (now - lastRetryMs < 5000) return;   // throttle to 5s
+    lastRetryMs = now;
+
+    if (!ensureWiFi()) {
+      showStatus("WiFi...", TFT_WHITE);
+      return;
+    }
+    StatusInfo info = pollStatus();
+    if (!info.ok || info.imageKey.length() == 0) {
+      showStatus("Roon...", TFT_YELLOW);
+      return;
+    }
+    // got a track — start download and wait for it
+    prevKey           = info.imageKey;
+    prevTitle         = info.title;
+    lastPlayingSeenMs = now;
+    showStatus("C...", TFT_WHITE);
+    startDownload(buildImageUrl(info.imageKey, info.album));
+    // synchronous wait (we're in startup, blocking is fine)
+    unsigned long t0 = millis();
+    while (dlState != DL_IDLE && millis() - t0 < 30000) {
+      tickDownload();
+      delay(10);
+    }
+    if (dlState == DL_IDLE) {
+      // enterState(STATE_COVER) clears prevKey so we don't redownload next loop
+      enterState(STATE_COVER);
+      // but we want to KEEP the key so the next poll doesn't redownload the
+      // same cover we already have on screen.
+      prevKey         = info.imageKey;
+      prevTitle       = info.title;
+      firstPollDone   = true;     // fix #7: now we can run idle timer
+    } else {
+      abortDownload();
+      showStatus("Img err", TFT_RED);
+    }
+    return;
+  }
+
+  // ---- STATE_CLOCK: keep ticking the clock each second ----
   if (state == STATE_CLOCK) {
     if (now - lastClockTickMs > 1000) {
       lastClockTickMs = now;
@@ -363,11 +445,11 @@ void loop() {
   if (now - lastPoll < POLL_INTERVAL) { delay(10); return; }
   lastPoll = now;
 
-  if (WiFi.status() != WL_CONNECTED) {
+  if (!ensureWiFi()) {
+    // fix #3: drop back to RETRY instead of blocking forever
     showStatus("WiFi...", TFT_WHITE);
-    WiFi.mode(WIFI_STA);
-    WiFi.begin(WIFI_SSID, WIFI_PASS);
-    while (WiFi.status() != WL_CONNECTED) delay(WIFI_RETRY_MS);
+    enterState(STATE_RETRY);
+    lastRetryMs = 0;
     return;
   }
 
@@ -383,10 +465,10 @@ void loop() {
       prevTitle = info.title;
       startDownload(buildImageUrl(info.imageKey, info.album));
     }
-    if (now - lastPlayingSeenMs > IDLE_TO_CLOCK_MS) {
+    if (firstPollDone && now - lastPlayingSeenMs > IDLE_TO_CLOCK_MS) {
       enterState(STATE_CLOCK);
     }
-  } else {
+  } else if (state == STATE_CLOCK) {
     if (info.isPlaying) {
       enterState(STATE_COVER);
     } else {
