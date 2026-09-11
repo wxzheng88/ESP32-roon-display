@@ -76,53 +76,6 @@ const int   SERVER_PORT   = 3666;        // RoonCoverArt 端口
 
 编译上传到开发板即可。
 
-## 工作原理
-
-```
-上电
-  ↓
-初始化 TCA9554 (I2C: GPIO15/GPIO7, addr=0x24)
-  ↓
-初始化 ST7701 显示屏 (3-wire SPI + RGB 并行)
-  ↓
-初始化 U8g2 + 启动 NTP 同步 (异步)
-  ↓
-显示启动画面 "roon display"
-  ↓
-WiFi 连接
-  ↓
-若 WiFi 失败: 显示 "WiFi FAIL" 3s 后自动重启 (fix #2)
-  ↓
-进入 STATE_RETRY 状态 (5s 节流), 反复重试直到拉到首张封面
-  ↓
-首次拉 /api/status -> 同步下载初始封面 -> 显示
-  ↓
-进入 loop() 主循环 (每帧 < 250ms):
-  ├─ COVER 状态: tickDownload() 非阻塞推进 (4KB chunk read, fix #4)
-  │              poll /api/status -> 歌名/image_key 变化即 abort 旧 + startDownload 新
-  │              空闲 15s -> CLOCK 状态 (需首次 poll 完成, fix #7)
-  └─ CLOCK 状态: 每秒 showClock() (内部分钟节流)
-                  NTP 未同步时显示 "NTP syncing..." 提示 (fix #6)
-                  poll /api/status -> is_playing -> COVER 状态
-  └─ WiFi/Roon 中途掉线: 自动回 STATE_RETRY, 不变砖 (fix #3)
-```
-
-## 项目结构
-
-```
-ESP32-roon-display/
-├── RoonCoverDisplay.ino    # 主程序 (入口, Arduino IDE 直接打开)
-├── boot_logo.h             # 启动画面 JPG 数据 (PROGMEM)
-├── wifi_config.example.h   # 凭据模板 (复制为 wifi_config.h)
-├── pinout.md               # V4 引脚映射
-├── README.md               # 本文件
-├── display/                # 实景照片 (README 引用)
-├── docs/                   # 进阶文档
-│   ├── pinout.md           # 与根目录 pinout.md 同步
-│   └── troubleshooting.md  # 故障排查
-└── main/                   # ESP-IDF 项目骨架 (SquareLine Studio 导出, 备用方案)
-```
-
 ---
 
 
