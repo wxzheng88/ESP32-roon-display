@@ -35,7 +35,7 @@
 | 存储 | 16MB Flash + 8MB PSRAM |
 | 连接 | WiFi 2.4GHz |
 
-> ⚠️ 开发板 wiki：https://www.waveshare.net/wiki/ESP32-S3-Touch-LCD-4
+> ⚠️ 开发板 wiki：[https://www.waveshare.net/wiki/ESP32-S3-Touch-LCD-4](https://docs.waveshare.net/ESP32-S3-Touch-LCD-4/?variant=ESP32-S3-LCD-4)
 
 ## 依赖服务
 
