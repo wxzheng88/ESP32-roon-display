@@ -7,7 +7,7 @@
 **基于 ESP32-S3 的 Roon 桌面专辑封面小摆件：正在播放 → 全屏封面，停止播放 → 自动变时钟**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-ESP32--S3-000000.svg?logo=espressif)](https://www.waveshare.net/wiki/ESP32-S3-Touch-LCD-4)
+[![Platform](https://img.shields.io/badge/platform-ESP32--S3-000000.svg?logo=espressif)](https://docs.waveshare.net/ESP32-S3-LCD-4/?variant=ESP32-S3-LCD-4)
 [![Framework](https://img.shields.io/badge/Arduino-IDE-00979D.svg?logo=arduino)](https://www.arduino.cc/)
 [![Powered by](https://img.shields.io/badge/%E9%97%A8%E8%80%B3%E6%9C%B5-Roon%20Cover%20Art-ff6f00.svg)](https://github.com/epochaudio/RoonCoverArt_Square_Frame_Docker)
 
@@ -70,7 +70,7 @@ flowchart LR
 
 > ⚠️ 板载电源键说明：短按 BAT-PWR 开机、长按 3 秒关机、RESET 键复位。详细原理见 [docs/power-button.md](docs/power-button.md)。
 > 
-> 开发板 wiki：https://www.waveshare.net/wiki/ESP32-S3-Touch-LCD-4
+> 开发板 wiki：[微雪 ESP32-S3-Touch-LCD-4 官方文档](https://docs.waveshare.net/ESP32-S3-LCD-4/?variant=ESP32-S3-LCD-4)
 
 ## 🚀 依赖服务部署（门耳朵 Roon Cover Art）
 
@@ -240,7 +240,7 @@ WiFi connected, IP: 192.168.x.x
 | [ArduinoJson](https://github.com/bblanchon/ArduinoJson) | bblanchon | JSON 解析 |
 | [U8g2](https://github.com/olikraus/u8g2) | olikraus | 中文字体渲染 |
 | [U8g2_for_Adafruit_GFX](https://github.com/olikraus/U8g2_for_Adafruit_GFX) | olikraus | 字体适配层 |
-| [微雪 Waveshare](https://www.waveshare.net/wiki/ESP32-S3-Touch-LCD-4) | — | 硬件与文档 |
+| [微雪 Waveshare](https://docs.waveshare.net/ESP32-S3-LCD-4/?variant=ESP32-S3-LCD-4) | — | 硬件与文档 |
 
 > 本项目在 AI 辅助下开发（DeepSeek / GLM），欢迎 Issue 与 PR。
 
